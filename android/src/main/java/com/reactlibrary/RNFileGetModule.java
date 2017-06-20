@@ -15,6 +15,8 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.Bitmap;
 import java.io.ByteArrayOutputStream;
 import android.util.Base64;
+import android.graphics.Canvas;
+import android.content.SharedPreferences;
 
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
@@ -27,11 +29,14 @@ import com.facebook.react.bridge.WritableMap;
 public class RNFileGetModule extends ReactContextBaseJavaModule {
 
   private final ReactApplicationContext reactContext;
+  SharedPreferences sharedpreferences;
+  public static final String MyPREFERENCES = "FileGet";
 
   interface Metadata {
       String ID = "ID";
       String NAME = "Name";
       String IMAGE = "Image";
+      String ISLOCKED = "IsLocked";
   }
 
   public RNFileGetModule(ReactApplicationContext reactContext) {
@@ -49,21 +54,37 @@ public class RNFileGetModule extends ReactContextBaseJavaModule {
       return (ai.flags & mask) == 0;
   }  
 
-  public String getImageFromDrawable(Drawable drawable){
-      String img = null;
-      if(drawable instanceof  BitmapDrawable) {
-          Bitmap bitmap = ((BitmapDrawable) drawable).getBitmap();
-          ByteArrayOutputStream stream = new ByteArrayOutputStream();
-          bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
-          byte[] arr = stream.toByteArray();
-          img = Base64.encodeToString(arr, Base64.URL_SAFE);
-          return img;
-      }
-      return null;
+  String encodeToBase64(Bitmap image, Bitmap.CompressFormat compressFormat, int quality)
+  {
+      ByteArrayOutputStream byteArrayOS = new ByteArrayOutputStream();
+      image.compress(compressFormat, quality, byteArrayOS);
+      return Base64.encodeToString(byteArrayOS.toByteArray(), Base64.DEFAULT);
   }  
+  Bitmap drawableToBitmap (Drawable drawable) {
+      Bitmap bitmap = null;
+
+      if (drawable instanceof BitmapDrawable) {
+          BitmapDrawable bitmapDrawable = (BitmapDrawable) drawable;
+          if(bitmapDrawable.getBitmap() != null) {
+              return bitmapDrawable.getBitmap();
+          }
+      }
+
+      if(drawable.getIntrinsicWidth() <= 0 || drawable.getIntrinsicHeight() <= 0) {
+          bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888); // Single color bitmap will be created of 1x1 pixel
+      } else {
+          bitmap = Bitmap.createBitmap(drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight(), Bitmap.Config.ARGB_8888);
+      }
+
+      Canvas canvas = new Canvas(bitmap);
+      drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+      drawable.draw(canvas);
+      return bitmap;
+  }
 
   @ReactMethod
-  public void openWifiSettings(Callback successCallback) {
+  public void getListOfInstalledApps(Callback successCallback) {
+    sharedpreferences = this.reactContext.getSharedPreferences(MyPREFERENCES, Context.MODE_PRIVATE);
     PackageManager pm = this.reactContext.getPackageManager();
     List<ApplicationInfo> packages = pm.getInstalledApplications(PackageManager.GET_META_DATA);
     WritableArray finalResult = Arguments.createArray();
@@ -71,15 +92,33 @@ public class RNFileGetModule extends ReactContextBaseJavaModule {
       if(isUserApp(packageInfo)) {
         WritableMap result = Arguments.createMap();
         String applicationName = (String) (packageInfo != null ? pm.getApplicationLabel(packageInfo) : "(unknown)");
-        // Drawable icon = getPackageManager().getApplicationIcon(packageInfo.processName);
-        String image = getImageFromDrawable(packageInfo.loadIcon(pm));
+        Drawable icon = pm.getApplicationIcon(packageInfo);
+
+        Bitmap bitmapOfIcon = drawableToBitmap(icon);
+
+        String base64OfIcon = encodeToBase64(bitmapOfIcon, Bitmap.CompressFormat.PNG, 100);
+
+        boolean IsLocked = sharedpreferences.getBoolean(packageInfo.packageName, false);
+
         result.putString(Metadata.ID, packageInfo.packageName); 
         result.putString(Metadata.NAME, applicationName);
-        result.putString(Metadata.IMAGE, image);
+        result.putString(Metadata.IMAGE, base64OfIcon);
+        result.putBoolean(Metadata.ISLOCKED, IsLocked);
         finalResult.pushMap(result);
       }        
     }
     successCallback.invoke(finalResult);
+  }
+  @ReactMethod
+  public void lockApp(String appID, Callback successCallback) {
+    Log.d("APP ID: ", appID);
+    sharedpreferences = this.reactContext.getSharedPreferences(MyPREFERENCES, Context.MODE_PRIVATE);
+    SharedPreferences.Editor editor = sharedpreferences.edit();
+    editor.putBoolean(appID, true);
+    boolean result = editor.commit();
+    successCallback.invoke(result);
+    // boolean pref = sharedpreferences.getBoolean(appID, false);
+    // Log.d("pref: ", pref.toString());
   }
 
 }
